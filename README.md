@@ -1,121 +1,225 @@
 # AudioTap
 
-Capture iPhone app/game audio via ReplayKit and stream it over TCP to a Mac receiver. Designed for USB Internet Sharing setups where USB audio (IDAM) can't coexist with USB networking.
+Capture iPhone app/game audio via ReplayKit and stream it in real-time over TCP to a Mac. Built for mobile esports setups where USB Internet Sharing is used and USB audio (IDAM) is unavailable.
 
-**How it works:** A Broadcast Upload Extension on the iPhone captures internal app audio, converts it to 16-bit PCM, and streams it over TCP to a Python receiver on the Mac. The USB cable stays in networking mode, so internet + audio + charging all work on one cable.
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                   iPhone                         │
+│                                                  │
+│  ┌──────────────┐     ┌───────────────────────┐ │
+│  │  AudioTap    │     │  Broadcast Extension  │ │
+│  │  (main app)  │     │  (SampleHandler)      │ │
+│  │              │     │                       │ │
+│  │ • IP/Port UI │     │ • ReplayKit capture   │ │
+│  │ • Status     │────▶│ • Audio conversion    │ │
+│  │ • Broadcast  │ App │ • TCP streaming       │ │
+│  │   picker     │Group│                       │ │
+│  └──────────────┘     └───────────┬───────────┘ │
+│                                   │ TCP          │
+└───────────────────────────────────┼──────────────┘
+                                    │ USB Internet
+                                    │ Sharing
+┌───────────────────────────────────┼──────────────┐
+│                Mac                │               │
+│                                   ▼               │
+│  ┌────────────────────────────────────────────┐  │
+│  │  audio_receiver.py                          │  │
+│  │                                             │  │
+│  │  • TCP server on port 7654                  │  │
+│  │  • Reads AUDP header (format negotiation)   │  │
+│  │  • Receives size-prefixed PCM frames        │  │
+│  │  • PyAudio real-time playback               │  │
+│  │  • Optional WAV file recording              │  │
+│  └────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. The **main app** (AudioTapApp) provides a UI to configure the Mac's IP address and port, and hosts a `RPSystemBroadcastPickerView` to start screen broadcasting.
+
+2. When the user starts a broadcast, iOS launches the **Broadcast Upload Extension** (AudioTapBroadcast) as a separate process. The extension receives `processSampleBuffer` callbacks with `.audioApp` sample buffers containing the audio from whatever app is in the foreground.
+
+3. The **SampleHandler** in the extension:
+   - Opens a TCP connection to the Mac receiver
+   - Reads the audio format from the `CMSampleBuffer`'s `AudioStreamBasicDescription`
+   - Sends a 12-byte AUDP header with sample rate, channels, and bit depth
+   - Extracts audio via the `AudioBufferList` API
+   - Converts to interleaved little-endian signed 16-bit PCM (handling big-endian, float32, and non-interleaved formats from ReplayKit)
+   - Sends size-prefixed PCM frames over TCP
+
+4. The **Python receiver** on the Mac:
+   - Listens for TCP connections on port 7654
+   - Reads the 12-byte AUDP header to configure playback
+   - Receives and plays PCM audio in real-time via PyAudio
+   - Optionally saves to a WAV file
+
+### Audio Format Handling
+
+ReplayKit delivers audio in various formats depending on the device. Common formats observed:
+
+| Device | Format | Flags | Notes |
+|--------|--------|-------|-------|
+| iPhone Air | 44100Hz 2ch 16-bit | `0xE` (big-endian, signed, packed) | Requires byte-swap |
+| Other devices | 48000Hz 2ch 32-bit float | `0x29` (float, non-interleaved) | Requires float→int16 + interleaving |
+
+The SampleHandler handles all combinations:
+- **Float32 non-interleaved** → interleave channels + convert to int16
+- **Float32 interleaved** → convert to int16
+- **Int16 non-interleaved** → interleave channels (+ byte-swap if big-endian)
+- **Int16 interleaved** → passthrough (+ byte-swap if big-endian)
+
+### Communication Between App and Extension
+
+The main app and broadcast extension are separate processes. They communicate via **App Groups** (`group.audiotap.shared`) shared `UserDefaults`:
+
+| Key | Direction | Purpose |
+|-----|-----------|---------|
+| `receiverHost` | App → Extension | Mac IP address |
+| `receiverPort` | App → Extension | TCP port |
+| `broadcastStatus` | Extension → App | Status: connecting/streaming/failed/stopped |
+| `broadcastStatusTime` | Extension → App | Timestamp for stale status detection |
+| `debugAudio` | Extension → App | Audio format diagnostic info |
 
 ## Prerequisites
 
 - Mac with macOS 13+ and Xcode 15+
 - iPhone with iOS 16+
-- Paid Apple Developer account
+- Apple Developer account (paid recommended; free accounts expire after 7 days)
 - USB cable (Lightning or USB-C)
-- Mac connected to internet via Ethernet
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - Python 3.10+ on Mac
+- [PortAudio](http://www.portaudio.com/) + [PyAudio](https://pypi.org/project/PyAudio/) for real-time playback
 
-## Build & Install iOS App
+## Quick Start
 
-1. Open `AudioTap.xcodeproj` in Xcode
-2. Select your Development Team in **both** targets (AudioTapApp + AudioTapBroadcast)
-3. Update bundle IDs if needed (must be unique to your dev account)
-4. Enable **App Groups** capability on both targets, group: `group.audiotap.shared`
-5. Connect iPhone via USB, select it as build destination
-6. Build & Run (`Cmd+R`)
-7. Trust the developer profile on iPhone: **Settings > General > VPN & Device Management**
-
-## Set Up Mac Receiver
+### 1. Build & Install the iOS App
 
 ```bash
-# Install PortAudio (required by PyAudio)
-brew install portaudio
+# Generate the Xcode project
+cd AudioTap
+xcodegen generate
 
-# Install PyAudio
+# Build for device (replace DEVELOPMENT_TEAM with your team ID)
+xcodebuild -project AudioTap.xcodeproj \
+  -scheme AudioTapApp \
+  -destination 'generic/platform=iOS' \
+  -allowProvisioningUpdates \
+  build
+
+# Install on connected iPhone
+xcrun devicectl device install app \
+  --device <DEVICE_ID> \
+  ~/Library/Developer/Xcode/DerivedData/AudioTap-*/Build/Products/Debug-iphoneos/AudioTapApp.app
+```
+
+Or open `AudioTap.xcodeproj` in Xcode, select your team in both targets, and hit `Cmd+R`.
+
+**First-time setup on iPhone:**
+- Trust the developer profile: **Settings → General → VPN & Device Management**
+- Enable Developer Mode: **Settings → Privacy & Security → Developer Mode**
+
+### 2. Set Up USB Internet Sharing
+
+1. Connect iPhone to Mac via USB
+2. **System Settings → General → Sharing → Internet Sharing**
+3. Share from: **Ethernet** (or Wi-Fi) → To: **iPhone USB**
+4. Toggle Internet Sharing **ON**
+5. On iPhone, disable Wi-Fi to force traffic over USB
+
+Find the Mac's USB bridge IP:
+```bash
+ifconfig bridge100 | grep inet
+# Typically 192.168.2.1
+```
+
+### 3. Start the Mac Receiver
+
+```bash
+# Install dependencies (one-time)
+brew install portaudio
 pip3 install pyaudio
 
 # Run the receiver
 python3 mac-receiver/audio_receiver.py
 ```
 
-### Receiver options
+### 4. Stream Audio
+
+1. Open **AudioTap** on iPhone
+2. Set the Mac IP (e.g. `192.168.2.1`) and port (`7654`), tap **Save Settings**
+3. Tap the red **Start Broadcast** button and confirm
+4. Switch to your game or app — audio streams to Mac in real-time
+
+## Receiver Options
 
 ```
-python3 audio_receiver.py                        # Play through speakers
+python3 audio_receiver.py                        # Play through default speakers
 python3 audio_receiver.py -o recording.wav       # Play + save to WAV
-python3 audio_receiver.py --no-play -o out.wav   # Save only (no pyaudio needed)
+python3 audio_receiver.py --no-play -o out.wav   # Save only (no PyAudio needed)
 python3 audio_receiver.py --list-devices          # List audio output devices
 python3 audio_receiver.py -d 2                   # Use specific output device
 python3 audio_receiver.py -p 8000                # Custom port
 ```
 
-## Set Up USB Internet Sharing
-
-1. Connect iPhone to Mac via USB
-2. **System Settings > General > Sharing > Internet Sharing**
-3. Share: **Ethernet** to: **iPhone USB** > toggle ON
-4. On iPhone, disable Wi-Fi and Cellular to force USB network
-
-### Verify the USB network IP
-
-The Mac's IP on the USB subnet is typically `172.20.10.1`:
-
-```bash
-ifconfig | grep -A5 "bridge"
-# Look for inet address on bridge100
-```
-
-## Usage
-
-1. Start the receiver on Mac: `python3 mac-receiver/audio_receiver.py`
-2. Open **AudioTap** on iPhone
-3. Verify IP is `172.20.10.1` and port is `7654`, tap **Save Settings**
-4. Tap the broadcast button and confirm the system prompt
-5. Switch to your game or app
-6. Audio streams to Mac in real-time
-
 ## Wire Protocol
 
 Binary, little-endian, over TCP.
 
-**Header** (12 bytes, sent once):
-| Offset | Size | Type   | Description                    |
+**Header** (12 bytes, sent once per connection):
+
+| Offset | Size | Type   | Value                          |
 |--------|------|--------|--------------------------------|
 | 0      | 4    | UInt32 | Magic: `0x41554450` ("AUDP")   |
-| 4      | 4    | UInt32 | Sample rate (e.g. 48000)       |
+| 4      | 4    | UInt32 | Sample rate (e.g. 44100)       |
 | 8      | 2    | UInt16 | Channels (1 or 2)              |
 | 10     | 2    | UInt16 | Bits per sample (16)           |
 
-**Data frames** (continuous):
-| Offset | Size | Type   | Description                    |
+**Data frames** (repeated):
+
+| Offset | Size | Type   | Value                          |
 |--------|------|--------|--------------------------------|
-| 0      | 4    | UInt32 | Frame size in bytes            |
-| 4      | N    | bytes  | Raw interleaved PCM samples    |
+| 0      | 4    | UInt32 | Frame size in bytes (N)        |
+| 4      | N    | bytes  | Interleaved little-endian PCM  |
 
-48kHz stereo 16-bit = ~192 KB/s = 1.5 Mbps. Trivial for USB networking.
-
-## Troubleshooting
-
-- **No connection**: Check Mac firewall allows port 7654. Test with `nc -l 7654`.
-- **No audio**: Some apps (AVPlayer, Safari, Music) are blocked by Apple. Most games work.
-- **Extension crashes**: Memory limit (~50 MB). Ensure no buffering in SampleHandler.
-- **App expires after 7 days**: Only with free dev accounts. Paid accounts don't expire.
+Typical bandwidth: 44100Hz × 2ch × 16-bit = ~176 KB/s = 1.4 Mbps. Trivial for USB.
 
 ## Project Structure
 
 ```
 AudioTap/
-├── AudioTap.xcodeproj/
-├── AudioTapApp/                    # Main app target
+├── project.yml                     # XcodeGen project spec
+├── AudioTapApp/                    # Main iOS app target
 │   ├── AudioTapApp.swift           # @main SwiftUI entry point
 │   ├── ContentView.swift           # Settings UI + broadcast picker
-│   ├── AudioTapApp.entitlements    # App Groups
+│   ├── AudioTapApp.entitlements    # App Groups entitlement
 │   └── Info.plist
 ├── AudioTapBroadcast/              # Broadcast Upload Extension
-│   ├── SampleHandler.swift         # Audio capture + TCP streaming
+│   ├── SampleHandler.swift         # Audio capture, conversion, TCP streaming
 │   ├── AudioTapBroadcast.entitlements
 │   └── Info.plist
-├── Shared/                         # Both targets
-│   └── AudioStreamProtocol.swift   # Wire protocol definitions
+├── Shared/                         # Code shared by both targets
+│   └── AudioStreamProtocol.swift   # AUDP header + frame wire format
 ├── mac-receiver/
-│   └── audio_receiver.py           # Python TCP receiver
+│   └── audio_receiver.py           # Python TCP receiver + player
 └── README.md
 ```
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| No connection | Check Mac firewall allows port 7654. Test: `nc -l 7654` |
+| Port in use | `kill $(lsof -ti :7654)` |
+| White noise | Likely an endianness mismatch. The SampleHandler handles big-endian → little-endian conversion. If you modify the code, ensure byte-swap is preserved. |
+| No audio data | Some apps block audio capture (AVPlayer, Safari, Music). Most games work. |
+| Extension crashes | ReplayKit extensions have a ~50 MB memory limit. Avoid buffering. |
+| App expires | Free developer accounts have 7-day provisioning. Use a paid account. |
+| "Connecting..." stuck | Receiver not running, wrong IP, or firewall blocking. |
+| PyAudio not found | `brew install portaudio && pip3 install pyaudio` |
+
+## License
+
+MIT
