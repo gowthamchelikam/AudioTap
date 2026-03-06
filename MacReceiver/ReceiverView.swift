@@ -1,8 +1,10 @@
 import SwiftUI
+import Darwin
 
 struct ReceiverView: View {
     @StateObject private var server = AudioServer()
     @State private var portText = "7654"
+    @State private var copied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,6 +65,48 @@ struct ReceiverView: View {
             .background(Color(.controlBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 16)
             .padding(.top, 12)
+
+            // MARK: - Listen Address
+            if server.isListening {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("LISTEN ADDRESS")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(localAddresses, id: \.self) { addr in
+                        HStack(spacing: 8) {
+                            Image(systemName: addr.contains("bridge") ? "cable.connector" : "wifi")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 14)
+
+                            Text(addr)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+
+                            Spacer()
+
+                            Button {
+                                let ip = addr.components(separatedBy: " ").first ?? addr
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(ip, forType: .string)
+                                copied = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                            } label: {
+                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Copy IP to clipboard")
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color(.controlBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
 
             // MARK: - Level Meters
             if server.isConnected {
@@ -135,7 +179,7 @@ struct ReceiverView: View {
             }
             .padding(16)
         }
-        .frame(width: 400, height: 480)
+        .frame(width: 400, height: 560)
         .onAppear {
             let port = UInt16(portText) ?? 7654
             server.start(port: port)
@@ -158,6 +202,40 @@ struct ReceiverView: View {
         if bytes < 1024 { return "\(bytes) B" }
         if bytes < 1_048_576 { return String(format: "%.0f KB", Double(bytes) / 1024) }
         return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+    }
+
+    private var localAddresses: [String] {
+        var addrs: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
+        defer { freeifaddrs(ifaddr) }
+
+        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let sa = ptr.pointee.ifa_addr.pointee
+            guard sa.sa_family == UInt8(AF_INET) else { continue }
+
+            let name = String(cString: ptr.pointee.ifa_name)
+            // Skip loopback and link-local
+            guard name != "lo0" else { continue }
+
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(ptr.pointee.ifa_addr, socklen_t(sa.sa_len),
+                        &hostname, socklen_t(hostname.count),
+                        nil, 0, NI_NUMERICHOST)
+            let ip = String(cString: hostname)
+            guard !ip.isEmpty, !ip.hasPrefix("169.254") else { continue }
+
+            let label: String
+            if name.hasPrefix("bridge") {
+                label = "\(ip):\(portText) (bridge — USB)"
+            } else if name.hasPrefix("en") {
+                label = "\(ip):\(portText) (\(name))"
+            } else {
+                label = "\(ip):\(portText) (\(name))"
+            }
+            addrs.append(label)
+        }
+        return addrs
     }
 }
 
