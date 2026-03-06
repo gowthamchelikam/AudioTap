@@ -17,10 +17,17 @@ class SampleHandler: RPBroadcastSampleHandler {
     // MARK: - Lifecycle
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
+        configureAudioSession()
         let host = defaults?.string(forKey: "receiverHost") ?? "192.168.2.1"
         let port = UInt32(defaults?.string(forKey: "receiverPort") ?? "7654") ?? 7654
         setStatus("connecting")
         connectToReceiver(host: host, port: port)
+    }
+
+    private func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: .mixWithOthers)
+        try? session.setActive(true)
     }
 
     override func broadcastPaused() {}
