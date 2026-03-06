@@ -213,7 +213,7 @@ AudioTap/
 |---------|----------|
 | No connection | Check Mac firewall allows port 7654. Test: `nc -l 7654` |
 | Port in use | `kill $(lsof -ti :7654)` |
-| White noise | Likely an endianness mismatch. The SampleHandler handles big-endian → little-endian conversion. If you modify the code, ensure byte-swap is preserved. |
+| White noise | Endianness mismatch — see [White Noise Debugging](docs/white-noise-debugging.md). The SampleHandler handles big-endian → little-endian conversion. If you modify the code, ensure byte-swap is preserved. |
 | No audio data | Some apps block audio capture (AVPlayer, Safari, Music). Most games work. |
 | Extension crashes | ReplayKit extensions have a ~50 MB memory limit. Avoid buffering. |
 | App expires | Free developer accounts have 7-day provisioning. Use a paid account. |
