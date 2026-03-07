@@ -2,6 +2,12 @@
 
 Capture iPhone app/game audio via ReplayKit and stream it in real-time over TCP to a Mac. Built for mobile esports setups where USB Internet Sharing is used and USB audio (IDAM) is unavailable.
 
+## Download
+
+- **iOS (TestFlight)**: https://testflight.apple.com/join/FcGC3Up3
+- **macOS (TestFlight)**: https://testflight.apple.com/join/bWZxFbtM
+- **Testing Guide (PDF)**: [GameCapture-Testing-Guide.pdf](docs/GameCapture-Testing-Guide.pdf)
+
 ## Architecture
 
 ```
