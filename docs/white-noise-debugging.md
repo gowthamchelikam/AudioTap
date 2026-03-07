@@ -1,6 +1,6 @@
 # Debugging the White Noise Issue
 
-This document captures the investigation and fix for a persistent white noise bug where AudioTap streamed audio that played as pure noise on the Mac receiver despite correct bitrates and connection.
+This document captures the investigation and fix for a persistent white noise bug where GameCapture streamed audio that played as pure noise on the Mac receiver despite correct bitrates and connection.
 
 ## Symptoms
 

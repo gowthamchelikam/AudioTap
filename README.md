@@ -104,7 +104,7 @@ The main app and broadcast extension are separate processes. They communicate vi
 ### 1. Build & Install the iOS App
 
 ```bash
-cd AudioTap
+cd GameCapture
 xcodegen generate
 
 xcodebuild -project GameCapture.xcodeproj \
@@ -207,15 +207,15 @@ Typical bandwidth: 44100Hz × 2ch × 16-bit = ~176 KB/s = 1.4 Mbps. Trivial for 
 ## Project Structure
 
 ```
-AudioTap/
+GameCapture/
 ├── project.yml                       # XcodeGen project spec (3 targets)
-├── AudioTapApp/                      # iOS app target
+├── AudioTapApp/                      # iOS app target (GameCapture)
 │   ├── AudioTapApp.swift             # @main SwiftUI entry point
 │   ├── ContentView.swift             # Settings UI + broadcast picker
 │   ├── Assets.xcassets/              # App icon + IXG logo
 │   ├── AudioTapApp.entitlements      # App Groups
 │   └── Info.plist
-├── AudioTapBroadcast/                # iOS Broadcast Upload Extension
+├── AudioTapBroadcast/                # Broadcast Extension (GameCapture)
 │   ├── SampleHandler.swift           # Audio capture, conversion, TCP streaming
 │   ├── AudioTapBroadcast.entitlements
 │   └── Info.plist
@@ -232,6 +232,7 @@ AudioTap/
 │   ├── audio_receiver.py
 │   └── requirements.txt
 └── docs/
+    ├── GameCapture-Testing-Guide.pdf  # Testing guide for Intercom dev team
     └── white-noise-debugging.md      # Post-mortem: big-endian byte-swap fix
 ```
 
