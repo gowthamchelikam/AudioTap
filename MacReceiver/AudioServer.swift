@@ -1,6 +1,8 @@
 import Foundation
 import Network
 import AVFoundation
+import AppKit
+import UniformTypeIdentifiers
 
 /// TCP server that receives AUDP audio from iPhone and plays it.
 @MainActor
@@ -314,9 +316,13 @@ final class AudioServer: ObservableObject {
     // MARK: - Recording
 
     func startRecording() {
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
-        let filename = "GameCapture_\(Int(Date().timeIntervalSince1970)).wav"
-        let url = desktop.appendingPathComponent(filename)
+        let panel = NSSavePanel()
+        panel.title = "Save Recording"
+        panel.nameFieldStringValue = "GameCapture_\(Int(Date().timeIntervalSince1970)).wav"
+        panel.allowedContentTypes = [.wav]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
 
         FileManager.default.createFile(atPath: url.path, contents: nil)
         guard let fh = FileHandle(forWritingAtPath: url.path) else { return }
